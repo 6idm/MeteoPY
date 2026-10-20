@@ -1,10 +1,30 @@
 """Alert engine: detects WHO threshold violations."""
+from dataclasses import dataclass
 from typing import Dict, List
 
 import pandas as pd
 
 from src.config import THRESHOLDS
 from src.data_processing import DataProcessor
+
+
+@dataclass(frozen=True)
+class AlertRule:
+    """Threshold rule applied to one column of the latest observation."""
+    column: str
+    threshold_key: str
+    warning_label: str
+    danger_label: str
+
+
+ALERT_RULES = [
+    AlertRule("pm2_5", "pm2_5", "Vigilance Pollution PM2.5", "Alerte Pic de Pollution PM2.5"),
+    AlertRule("pm10", "pm10", "Vigilance Pollution PM10", "Alerte Pic de Pollution PM10"),
+    AlertRule("nitrogen_dioxide", "no2", "Vigilance Pollution NO2", "Alerte Pic de Pollution NO2"),
+    AlertRule("ozone", "o3", "Vigilance Pollution O3", "Alerte Pic de Pollution O3"),
+    AlertRule("sulphur_dioxide", "so2", "Vigilance Pollution SO2", "Alerte Pic de Pollution SO2"),
+    AlertRule("temperature_2m", "temp_max", "Vigilance Forte Chaleur", "Alerte Canicule"),
+]
 
 
 class AlertEngine:
@@ -14,38 +34,30 @@ class AlertEngine:
     """
 
     @staticmethod
-    def detect_alerts(df: pd.DataFrame) -> List[Dict[str, str]]:
-        """Scans current/recent data points for threshold violations."""
+    def detect_alerts(df: pd.DataFrame, rules: List[AlertRule] = ALERT_RULES) -> List[Dict[str, str]]:
+        """Scans the latest observation for threshold violations. Danger alerts come first."""
         alerts = []
         if df.empty:
             return alerts
 
         latest = DataProcessor.get_latest_observation(df)
 
-        # PM2.5 check
-        if latest["pm2_5"] >= THRESHOLDS["pm2_5"]["danger"]:
-            alerts.append({
-                "level": "danger",
-                "message": f"Alerte Rouge Pollution (PM2.5) : {latest['pm2_5']:.1f} {THRESHOLDS['pm2_5']['unit']} (Seuil: {THRESHOLDS['pm2_5']['danger']})"
-            })
-        elif latest["pm2_5"] >= THRESHOLDS["pm2_5"]["warning"]:
-            alerts.append({
-                "level": "warning",
-                "message": f"Vigilance Pollution (PM2.5) : {latest['pm2_5']:.1f} {THRESHOLDS['pm2_5']['unit']}"
-            })
+        for rule in rules:
+            value = latest.get(rule.column)
+            if value is None or pd.isna(value):
+                continue
+            threshold = THRESHOLDS[rule.threshold_key]
+            unit = threshold["unit"]
 
-        # NO2 check
-        if latest["nitrogen_dioxide"] >= THRESHOLDS["no2"]["danger"]:
-            alerts.append({
-                "level": "danger",
-                "message": f"Alerte Dépassement NO2 : {latest['nitrogen_dioxide']:.1f} µg/m³"
-            })
+            if value >= threshold["danger"]:
+                alerts.append({
+                    "level": "danger",
+                    "message": f"{rule.danger_label} : {value:.1f} {unit} (seuil : {threshold['danger']} {unit})"
+                })
+            elif value >= threshold["warning"]:
+                alerts.append({
+                    "level": "warning",
+                    "message": f"{rule.warning_label} : {value:.1f} {unit} (seuil : {threshold['warning']} {unit})"
+                })
 
-        # Temperature check
-        if latest["temperature_2m"] >= THRESHOLDS["temp_max"]["warning"]:
-            alerts.append({
-                "level": "warning",
-                "message": f"Vigilance Forte Chaleur / Canicule : {latest['temperature_2m']:.1f} °C"
-            })
-
-        return alerts
+        return sorted(alerts, key=lambda a: a["level"] != "danger")

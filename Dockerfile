@@ -13,6 +13,7 @@ RUN pip install -r requirements.txt
 
 COPY app.py .
 COPY src/ src/
+COPY .streamlit/ .streamlit/
 
 # Non-root user owning the SQLite cache directory
 RUN useradd --create-home appuser && mkdir -p data && chown appuser:appuser data

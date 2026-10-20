@@ -62,6 +62,7 @@ pytest
 
 ```
 app.py                  # Point d'entrée Streamlit
+.streamlit/config.toml  # Thème clair / sombre de l'interface
 src/
   config.py             # Villes, seuils OMS, TTL du cache, chemins
   api_client.py         # Requêtes API, cache SQLite (TTL), données mock

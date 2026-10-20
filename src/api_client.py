@@ -1,4 +1,4 @@
-"""Open-Meteo API client with SQLite local cache and offline mock data."""
+"""Open-Meteo API client with SQLite local cache, geocoding and offline mock data."""
 import datetime
 import json
 import logging
@@ -7,10 +7,19 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-from src.config import CACHE_DB, CACHE_TTL_MINUTES, REQUEST_TIMEOUT_SECONDS
+from src.config import (
+    AIR_QUALITY_VARIABLES, CACHE_DB, CACHE_TTL_MINUTES, FORECAST_DAYS, PAST_DAYS,
+    REQUEST_TIMEOUT_SECONDS, WEATHER_VARIABLES
+)
 
 logger = logging.getLogger(__name__)
+
+WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
+AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
+GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 
 
 class WeatherAPIClient:
@@ -21,7 +30,17 @@ class WeatherAPIClient:
 
     def __init__(self, db_path: str = CACHE_DB):
         self.db_path = db_path
+        self.session = self._build_session()
         self._init_db()
+
+    @staticmethod
+    def _build_session() -> requests.Session:
+        """HTTP session retrying transient errors (rate limit, 5xx) with exponential backoff."""
+        retry = Retry(total=2, backoff_factor=0.5, status_forcelist=[429, 500, 502, 503, 504],
+                      allowed_methods=["GET"])
+        session = requests.Session()
+        session.mount("https://", HTTPAdapter(max_retries=retry))
+        return session
 
     def _init_db(self) -> None:
         """Initializes SQLite cache database table."""
@@ -71,34 +90,70 @@ class WeatherAPIClient:
         except Exception as e:
             logger.error(f"Failed to write cache for key {key}: {e}")
 
+    def geocode_city(self, name: str) -> Optional[Dict[str, Any]]:
+        """
+        Resolves a city name to coordinates with the Open-Meteo geocoding API.
+        Returns {"name", "country", "lat", "lon"} or None if not found / unreachable.
+        """
+        name = name.strip()
+        if not name:
+            return None
+
+        cache_key = f"geo_{name.lower()}"
+        cached = self._get_cached_data(cache_key)
+        if cached:
+            return cached
+
+        try:
+            res = self.session.get(
+                GEOCODING_URL, params={"name": name, "count": 1, "language": "fr"},
+                timeout=REQUEST_TIMEOUT_SECONDS
+            )
+            res.raise_for_status()
+            results = res.json().get("results") or []
+        except (requests.exceptions.RequestException, ValueError) as e:
+            logger.error(f"Geocoding failed for '{name}': {e}")
+            return None
+
+        if not results:
+            return None
+
+        first = results[0]
+        city = {
+            "name": first["name"],
+            "country": first.get("country", ""),
+            "lat": first["latitude"],
+            "lon": first["longitude"],
+        }
+        self._set_cached_data(cache_key, city)
+        return city
+
     def fetch_weather_and_air_quality(self, lat: float, lon: float, mock_mode: bool = False) -> Dict[str, Any]:
         """
-        Fetches combined weather and air quality data from Open-Meteo or local mock generator.
+        Fetches combined weather and air quality data (past days + forecast, hourly, UTC)
+        from Open-Meteo or local mock generator.
+        The "source" key of the result tells where the data comes from: "api", "cache" or "mock".
         """
-        cache_key = f"data_{lat}_{lon}"
+        cache_key = f"data_v2_{lat}_{lon}"
 
         if mock_mode:
             return self._generate_mock_data(lat, lon)
 
         cached_data = self._get_cached_data(cache_key)
         if cached_data:
-            return cached_data
+            return {**cached_data, "source": "cache"}
 
-        weather_url = (
-            f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
-            f"&current_weather=true&hourly=temperature_2m,relativehumidity_2m,surface_pressure,windspeed_10m"
-            f"&past_days=7&timezone=UTC"
-        )
-        air_quality_url = (
-            f"https://air-quality-api.open-meteo.com/v1/air-quality?latitude={lat}&longitude={lon}"
-            f"&hourly=pm10,pm2_5,nitrogen_dioxide,ozone,sulphur_dioxide,carbon_monoxide,us_aqi"
-            f"&past_days=7&timezone=UTC"
-        )
+        common = {
+            "latitude": lat, "longitude": lon, "timezone": "UTC",
+            "past_days": PAST_DAYS, "forecast_days": FORECAST_DAYS,
+        }
+        weather_params = {**common, "hourly": ",".join(WEATHER_VARIABLES)}
+        air_quality_params = {**common, "hourly": ",".join(AIR_QUALITY_VARIABLES)}
 
         try:
             logger.info(f"Requesting remote APIs for coordinates ({lat}, {lon})...")
-            weather_res = requests.get(weather_url, timeout=REQUEST_TIMEOUT_SECONDS)
-            air_res = requests.get(air_quality_url, timeout=REQUEST_TIMEOUT_SECONDS)
+            weather_res = self.session.get(WEATHER_URL, params=weather_params, timeout=REQUEST_TIMEOUT_SECONDS)
+            air_res = self.session.get(AIR_QUALITY_URL, params=air_quality_params, timeout=REQUEST_TIMEOUT_SECONDS)
 
             weather_res.raise_for_status()
             air_res.raise_for_status()
@@ -108,7 +163,7 @@ class WeatherAPIClient:
                 "air_quality": air_res.json()
             }
             self._set_cached_data(cache_key, combined)
-            return combined
+            return {**combined, "source": "api"}
 
         except requests.exceptions.RequestException as e:
             logger.error(f"API request failed: {e}. Falling back to mock data.")
@@ -118,36 +173,50 @@ class WeatherAPIClient:
             return self._generate_mock_data(lat, lon)
 
     def _generate_mock_data(self, lat: float, lon: float) -> Dict[str, Any]:
-        """Fallback mock data generator for disconnected mode or testing."""
-        hours = 24 * 7
-        now = datetime.datetime.now(datetime.timezone.utc).replace(minute=0, second=0, microsecond=0, tzinfo=None)
-        times = [(now - datetime.timedelta(hours=i)).strftime("%Y-%m-%dT%H:%M") for i in range(hours)][::-1]
+        """
+        Fallback mock data generator for disconnected mode or testing (same layout as the API).
+        Values are seeded by location and current hour so they stay stable between page refreshes.
+        """
+        hours = 24 * (PAST_DAYS + FORECAST_DAYS)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        rng = np.random.default_rng([int(abs(lat) * 1e4), int(abs(lon) * 1e4), int(now.timestamp() // 3600)])
+        start = now.replace(
+            hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+        ) - datetime.timedelta(days=PAST_DAYS)
+        times = [(start + datetime.timedelta(hours=i)).strftime("%Y-%m-%dT%H:%M") for i in range(hours)]
+
+        # Daily temperature cycle: coolest around 4h, warmest around 16h
+        hour_of_day = np.arange(hours) % 24
+        temperature = 18 + 6 * np.sin((hour_of_day - 10) / 24 * 2 * np.pi) + rng.normal(0, 1.5, hours)
+        humidity = np.clip(70 - 2 * (temperature - 18) + rng.normal(0, 5, hours), 20, 100)
+        wind = rng.uniform(2, 30, hours)
 
         return {
+            "source": "mock",
             "weather": {
-                "current_weather": {
-                    "temperature": round(np.random.uniform(15, 30), 1),
-                    "windspeed": round(np.random.uniform(5, 25), 1),
-                    "winddirection": int(np.random.uniform(0, 360))
-                },
                 "hourly": {
                     "time": times,
-                    "temperature_2m": np.random.normal(20, 5, hours).tolist(),
-                    "relativehumidity_2m": np.random.uniform(40, 90, hours).tolist(),
-                    "surface_pressure": np.random.uniform(1000, 1025, hours).tolist(),
-                    "windspeed_10m": np.random.uniform(2, 30, hours).tolist()
+                    "temperature_2m": temperature.round(1).tolist(),
+                    "apparent_temperature": (temperature - wind * 0.1).round(1).tolist(),
+                    "relative_humidity_2m": humidity.round(0).tolist(),
+                    "surface_pressure": rng.uniform(1000, 1025, hours).round(1).tolist(),
+                    "wind_speed_10m": wind.round(1).tolist(),
+                    "wind_direction_10m": rng.uniform(0, 360, hours).round(0).tolist(),
+                    "cloud_cover": rng.uniform(0, 100, hours).round(0).tolist(),
+                    "precipitation": np.where(rng.random(hours) < 0.15,
+                                              rng.uniform(0.1, 4, hours), 0.0).round(1).tolist()
                 }
             },
             "air_quality": {
                 "hourly": {
                     "time": times,
-                    "pm2_5": np.random.uniform(5, 35, hours).tolist(),
-                    "pm10": np.random.uniform(10, 60, hours).tolist(),
-                    "nitrogen_dioxide": np.random.uniform(10, 55, hours).tolist(),
-                    "ozone": np.random.uniform(20, 80, hours).tolist(),
-                    "sulphur_dioxide": np.random.uniform(1, 15, hours).tolist(),
-                    "carbon_monoxide": np.random.uniform(100, 500, hours).tolist(),
-                    "us_aqi": np.random.randint(15, 120, hours).tolist()
+                    "pm2_5": rng.uniform(5, 35, hours).tolist(),
+                    "pm10": rng.uniform(10, 60, hours).tolist(),
+                    "nitrogen_dioxide": rng.uniform(10, 55, hours).tolist(),
+                    "ozone": rng.uniform(20, 120, hours).tolist(),
+                    "sulphur_dioxide": rng.uniform(1, 15, hours).tolist(),
+                    "carbon_monoxide": rng.uniform(100, 500, hours).tolist(),
+                    "us_aqi": rng.integers(15, 160, hours).tolist()
                 }
             }
         }

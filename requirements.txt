@@ -4,3 +4,4 @@ numpy
 plotly>=6
 streamlit
 pytest
+python-dotenv

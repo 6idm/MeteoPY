@@ -27,7 +27,7 @@ Aucune clé API n'est nécessaire. Les paramètres optionnels se règlent dans u
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt   # dépendances + pytest
 ```
 
 ## Lancement
@@ -37,6 +37,20 @@ streamlit run app.py
 ```
 
 Le mode « Déconnecté » (barre latérale) utilise des données simulées. Il est aussi activé automatiquement si l'API est injoignable.
+
+## Docker
+
+```bash
+docker compose up --build -d     # construit l'image et démarre le dashboard
+```
+
+Le dashboard est accessible sur http://localhost:8501. Le cache SQLite est conservé dans le volume
+`meteo-cache`. Un fichier `.env` à la racine est pris en compte s'il existe.
+
+```bash
+docker compose logs -f           # suivre les logs
+docker compose down              # arrêter (ajouter -v pour supprimer le cache)
+```
 
 ## Tests
 
@@ -57,4 +71,6 @@ src/
 tests/                  # Tests pytest
 data/                   # Cache SQLite (non versionné)
 docs/                   # Cahier des charges et supports
+Dockerfile              # Image de l'application
+docker-compose.yml      # Lancement du conteneur (port 8501, volume de cache)
 ```

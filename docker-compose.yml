@@ -1,0 +1,17 @@
+services:
+  dashboard:
+    build: .
+    image: meteopy-dashboard
+    container_name: meteopy-dashboard
+    ports:
+      - "8501:8501"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      # Keeps the SQLite API cache between container restarts
+      - meteo-cache:/app/data
+    restart: unless-stopped
+
+volumes:
+  meteo-cache:

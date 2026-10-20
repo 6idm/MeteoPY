@@ -1,6 +1,21 @@
-data_cache.db
-*.db
+# Python
 __pycache__/
-.env
+*.py[cod]
+.pytest_cache/
+
+# Environnements virtuels
 .venv/
 venv/
+
+# Secrets
+.env
+.streamlit/secrets.toml
+
+# Cache local (SQLite)
+data/*.db
+*.db
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store

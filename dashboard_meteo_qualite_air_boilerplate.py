@@ -108,10 +108,12 @@ class WeatherAPIClient:
         weather_url = (
             f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
             f"&current_weather=true&hourly=temperature_2m,relativehumidity_2m,surface_pressure,windspeed_10m"
+            f"&past_days=7&timezone=UTC"
         )
         air_quality_url = (
             f"https://air-quality-api.open-meteo.com/v1/air-quality?latitude={lat}&longitude={lon}"
             f"&hourly=pm10,pm2_5,nitrogen_dioxide,ozone,sulphur_dioxide,carbon_monoxide,us_aqi"
+            f"&past_days=7&timezone=UTC"
         )
 
         try:
@@ -136,8 +138,8 @@ class WeatherAPIClient:
     def _generate_mock_data(self, lat: float, lon: float) -> Dict[str, Any]:
         """Fallback mock data generator for disconnected mode or testing."""
         hours = 24 * 7
-        now = datetime.datetime.now()
-        times = [(now - datetime.timedelta(hours=i)).isoformat() for i in range(hours)][::-1]
+        now = datetime.datetime.now(datetime.timezone.utc).replace(minute=0, second=0, microsecond=0, tzinfo=None)
+        times = [(now - datetime.timedelta(hours=i)).strftime("%Y-%m-%dT%H:%M") for i in range(hours)][::-1]
 
         return {
             "weather": {
@@ -193,6 +195,25 @@ class DataProcessor:
         return df
 
     @staticmethod
+    def get_latest_observation(df: pd.DataFrame) -> pd.Series:
+        """
+        Returns the most recent row that is not in the future and has complete key values.
+        The API series also contains forecasts (with NaN for air quality), so df.iloc[-1]
+        is not the current state.
+        """
+        key_cols = [c for c in ("temperature_2m", "relativehumidity_2m", "pm2_5", "nitrogen_dioxide", "us_aqi")
+                    if c in df.columns]
+        now_utc = pd.Timestamp.now(tz="UTC").tz_localize(None)
+        valid = df.dropna(subset=key_cols)
+        if "datetime" in valid.columns:
+            past = valid[valid["datetime"] <= now_utc]
+            if not past.empty:
+                valid = past
+        if valid.empty:
+            return df.iloc[-1]
+        return valid.iloc[-1]
+
+    @staticmethod
     def calculate_custom_health_index(df: pd.DataFrame) -> pd.Series:
         """
         Calculates a custom composite Comfort/Health Score (0-100 scale).
@@ -217,7 +238,7 @@ class DataProcessor:
         if df.empty:
             return alerts
 
-        latest = df.iloc[-1]
+        latest = DataProcessor.get_latest_observation(df)
 
         # PM2.5 check
         if latest["pm2_5"] >= THRESHOLDS["pm2_5"]["danger"]:
@@ -278,7 +299,7 @@ def render_dashboard():
 
     # Add calculated metrics
     df["health_score"] = DataProcessor.calculate_custom_health_index(df)
-    latest = df.iloc[-1]
+    latest = DataProcessor.get_latest_observation(df)
 
     # Alert Box Section
     alerts = DataProcessor.detect_alerts(df)
@@ -297,7 +318,7 @@ def render_dashboard():
     
     col1.metric("Température", f"{latest['temperature_2m']:.1f} °C")
     col2.metric("Humidité", f"{latest['relativehumidity_2m']:.0f} %")
-    col3.metric("Indice AQI (US)", f"{int(latest['us_aqi'])}")
+    col3.metric("Indice AQI (US)", f"{latest['us_aqi']:.0f}" if pd.notna(latest["us_aqi"]) else "N/A")
     col4.metric("PM 2.5", f"{latest['pm2_5']:.1f} µg/m³")
     col5.metric("Score Confort (0-100)", f"{latest['health_score']:.1f}")
 
@@ -312,16 +333,17 @@ def render_dashboard():
             labels={"value": "Valeur", "datetime": "Date/Heure", "variable": "Métrique"},
             title="Série temporelle Météo"
         )
-        st.plotly_chart(fig_temp, use_container_width=True)
+        st.plotly_chart(fig_temp, width="stretch")
 
     with tab2:
         st.subheader("Concentration des Polluants Clés (µg/m³)")
         fig_air = px.bar(
-            df.tail(24), x="datetime", y=["pm2_5", "pm10", "nitrogen_dioxide"],
+            df.dropna(subset=["pm2_5", "pm10", "nitrogen_dioxide"]).loc[lambda d: d["datetime"] <= latest["datetime"]].tail(24),
+            x="datetime", y=["pm2_5", "pm10", "nitrogen_dioxide"],
             barmode="group",
             title="Exposition aux polluants sur les 24 dernières heures"
         )
-        st.plotly_chart(fig_air, use_container_width=True)
+        st.plotly_chart(fig_air, width="stretch")
 
     with tab3:
         st.subheader("Localisation de la station de suivi")
@@ -331,12 +353,12 @@ def render_dashboard():
             "city": selected_city,
             "aqi": latest["us_aqi"]
         }])
-        fig_map = px.scatter_mapbox(
+        fig_map = px.scatter_map(
             map_df, lat="lat", lon="lon", hover_name="city", hover_data=["aqi"],
             color_discrete_sequence=["fuchsia"], zoom=9, height=400
         )
-        fig_map.update_layout(mapbox_style="open-street-map")
-        st.plotly_chart(fig_map, use_container_width=True)
+        fig_map.update_layout(map_style="open-street-map")
+        st.plotly_chart(fig_map, width="stretch")
 
 
 class TestDashboardModules(unittest.TestCase):
@@ -362,6 +384,16 @@ class TestDashboardModules(unittest.TestCase):
     def test_alerts_detection(self):
         alerts = DataProcessor.detect_alerts(self.mock_df)
         self.assertTrue(len(alerts) > 0)
+
+    def test_latest_observation_skips_future_nan_rows(self):
+        df = self.mock_df.copy()
+        df["us_aqi"] = [40.0, 90.0]
+        df["datetime"] = pd.to_datetime(df["time"])
+        future = df.iloc[[-1]].copy()
+        future["datetime"] = pd.Timestamp("2100-01-01")
+        future[["pm2_5", "us_aqi"]] = np.nan
+        latest = DataProcessor.get_latest_observation(pd.concat([df, future]))
+        self.assertEqual(latest["us_aqi"], 90.0)
 
 
 if __name__ == "__main__":

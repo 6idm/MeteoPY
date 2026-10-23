@@ -3,6 +3,7 @@ import datetime
 import json
 import logging
 import sqlite3
+from dataclasses import asdict
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -14,6 +15,7 @@ from src.config import (
     AIR_QUALITY_VARIABLES, CACHE_DB, CACHE_TTL_MINUTES, FORECAST_DAYS, PAST_DAYS,
     REQUEST_TIMEOUT_SECONDS, WEATHER_VARIABLES
 )
+from src.models import City
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +92,10 @@ class WeatherAPIClient:
         except Exception as e:
             logger.error(f"Failed to write cache for key {key}: {e}")
 
-    def geocode_city(self, name: str) -> Optional[Dict[str, Any]]:
+    def geocode_city(self, name: str) -> Optional[City]:
         """
         Resolves a city name to coordinates with the Open-Meteo geocoding API.
-        Returns {"name", "country", "lat", "lon"} or None if not found / unreachable.
+        Returns None if the city is not found or the API is unreachable.
         """
         name = name.strip()
         if not name:
@@ -102,7 +104,7 @@ class WeatherAPIClient:
         cache_key = f"geo_{name.lower()}"
         cached = self._get_cached_data(cache_key)
         if cached:
-            return cached
+            return City(**cached)
 
         try:
             res = self.session.get(
@@ -119,13 +121,12 @@ class WeatherAPIClient:
             return None
 
         first = results[0]
-        city = {
-            "name": first["name"],
-            "country": first.get("country", ""),
-            "lat": first["latitude"],
-            "lon": first["longitude"],
-        }
-        self._set_cached_data(cache_key, city)
+        try:
+            city = City(first["name"], first["latitude"], first["longitude"], first.get("country", ""))
+        except KeyError as e:
+            logger.error(f"Incomplete geocoding result for '{name}': missing {e}")
+            return None
+        self._set_cached_data(cache_key, asdict(city))
         return city
 
     def fetch_weather_and_air_quality(self, lat: float, lon: float, mock_mode: bool = False) -> Dict[str, Any]:

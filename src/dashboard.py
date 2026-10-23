@@ -1,4 +1,5 @@
 """Streamlit user interface (View layer)."""
+from dataclasses import dataclass
 from html import escape
 from typing import Dict, List, Optional
 
@@ -12,6 +13,7 @@ from src.alerts import AlertEngine
 from src.api_client import WeatherAPIClient
 from src.config import AQI_CATEGORIES, DEFAULT_CITIES, METRICS, THRESHOLDS
 from src.data_processing import DataProcessor
+from src.models import City
 
 # Categorical slots (fixed order) and status colors, validated for both themes
 SERIES_COLORS = {
@@ -125,12 +127,19 @@ def style_figure(fig: go.Figure, height: int, legend: bool = False) -> go.Figure
     return fig
 
 
-def load_city_data(lat: float, lon: float, mock_mode: bool) -> pd.DataFrame:
+@dataclass(frozen=True)
+class SidebarChoices:
+    """User choices made in the selection panel."""
+    city: City
+    mock_mode: bool
+
+
+def load_city_data(city: City, mock_mode: bool) -> pd.DataFrame:
     """
     Fetches, processes and enriches the data of one location (API calls are cached in SQLite).
     The data source ("api", "cache" or "mock") is stored in df.attrs["source"].
     """
-    raw_data = WeatherAPIClient().fetch_weather_and_air_quality(lat, lon, mock_mode=mock_mode)
+    raw_data = WeatherAPIClient().fetch_weather_and_air_quality(city.lat, city.lon, mock_mode=mock_mode)
     df = DataProcessor.process_raw_api_data(raw_data)
     if not df.empty:
         df["health_score"] = DataProcessor.calculate_custom_health_index(df)
@@ -138,7 +147,7 @@ def load_city_data(lat: float, lon: float, mock_mode: bool) -> pd.DataFrame:
     return df
 
 
-def render_sidebar(cities: Dict[str, Dict[str, float]]) -> Dict:
+def render_sidebar(cities: Dict[str, City]) -> SidebarChoices:
     """Renders the selection panel and returns the user choices."""
     with st.sidebar:
         st.markdown("### MeteoPY")
@@ -150,13 +159,13 @@ def render_sidebar(cities: Dict[str, Dict[str, float]]) -> Dict:
             if st.form_submit_button("Ajouter", width="stretch") and new_city:
                 found = WeatherAPIClient().geocode_city(new_city)
                 if found:
-                    cities[f"{found['name']} ({found['country']})"] = {"lat": found["lat"], "lon": found["lon"]}
+                    cities[found.label] = found
                     st.rerun()
                 else:
                     st.error(f"Ville « {new_city} » introuvable.")
 
         mock_mode = st.toggle("Mode déconnecté", value=False, help="Utilise des données simulées.")
-    return {"city": selected_city, "mock_mode": mock_mode}
+    return SidebarChoices(cities[selected_city], mock_mode)
 
 
 def render_header(city: str, latest: pd.Series, source: str, mock_mode: bool) -> None:
@@ -385,20 +394,20 @@ def render_statistics(df: pd.DataFrame) -> None:
     st.dataframe(daily, width="stretch", height="content", column_config={c: number for c in daily.columns})
 
 
-def render_map(cities: Dict[str, Dict[str, float]], selected_city: str, mock_mode: bool) -> None:
+def render_map(cities: Dict[str, City], selected_city: City, mock_mode: bool) -> None:
     """Renders an interactive map of all cities colored by their current AQI category."""
     rows = []
-    for name, coords in cities.items():
-        city_df = load_city_data(coords["lat"], coords["lon"], mock_mode)
+    for name, city in cities.items():
+        city_df = load_city_data(city, mock_mode)
         if city_df.empty:
             continue
         city_latest = DataProcessor.get_latest_observation(city_df)
         category = DataProcessor.get_aqi_category(city_latest["us_aqi"])
         rows.append({
-            "Ville": name, "lat": coords["lat"], "lon": coords["lon"],
+            "Ville": name, "lat": city.lat, "lon": city.lon,
             "AQI": city_latest["us_aqi"], "Catégorie": category["label"], "color": category["color"],
             "Température (°C)": round(city_latest["temperature_2m"], 1),
-            "taille": 20 if name == selected_city else 12,
+            "taille": 20 if city == selected_city else 12,
         })
     map_df = pd.DataFrame(rows)
 
@@ -408,7 +417,7 @@ def render_map(cities: Dict[str, Dict[str, float]], selected_city: str, mock_mod
             map_df, lat="lat", lon="lon", hover_name="Ville", color="Catégorie", size="taille", size_max=20,
             hover_data={"AQI": ":.0f", "Température (°C)": True, "lat": False, "lon": False, "taille": False},
             color_discrete_map=dict(zip(map_df["Catégorie"], map_df["color"])), zoom=3.6, height=480,
-            center={"lat": cities[selected_city]["lat"], "lon": cities[selected_city]["lon"]},
+            center={"lat": selected_city.lat, "lon": selected_city.lon},
             map_style="carto-darkmatter" if theme_type() == "dark" else "carto-positron",
         )
         fig_map.update_layout(margin={"l": 0, "r": 0, "t": 0, "b": 0},
@@ -436,13 +445,12 @@ def render_dashboard():
                        layout="wide")
     st.html(CSS)
 
-    cities = st.session_state.setdefault("cities", dict(DEFAULT_CITIES))
+    cities = st.session_state.setdefault("cities", {city.label: city for city in DEFAULT_CITIES})
     choices = render_sidebar(cities)
-    selected_city = choices["city"]
-    city_info = cities[selected_city]
+    selected_city = choices.city
 
-    with st.spinner(f"Chargement des données pour {selected_city}..."):
-        df = load_city_data(city_info["lat"], city_info["lon"], choices["mock_mode"])
+    with st.spinner(f"Chargement des données pour {selected_city.name}..."):
+        df = load_city_data(selected_city, choices.mock_mode)
 
     if df.empty:
         st.error("Impossible de récupérer ou d'afficher les données.")
@@ -463,12 +471,12 @@ def render_dashboard():
         st.divider()
         st.download_button(
             "Exporter en CSV", filtered.drop(columns=["time"]).to_csv(index=False).encode("utf-8"),
-            file_name=f"meteo_{selected_city.split(' ')[0].lower()}_{start}_{end}.csv",
+            file_name=f"meteo_{selected_city.name.lower()}_{start}_{end}.csv",
             mime="text/csv", width="stretch",
         )
         st.caption("Données Open-Meteo · Seuils OMS 2021 · Heures en UTC")
 
-    render_header(selected_city, latest, df.attrs.get("source", "api"), choices["mock_mode"])
+    render_header(selected_city.label, latest, df.attrs.get("source", "api"), choices.mock_mode)
     render_alerts(df)
     st.write("")
     render_current_conditions(df, latest)
@@ -484,4 +492,4 @@ def render_dashboard():
     with tab_stats:
         render_statistics(df)
     with tab_map:
-        render_map(cities, selected_city, choices["mock_mode"])
+        render_map(cities, selected_city, choices.mock_mode)

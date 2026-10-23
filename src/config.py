@@ -2,6 +2,8 @@
 import os
 from pathlib import Path
 
+from src.models import City
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -46,13 +48,13 @@ METRICS = {
     "health_score": ("Score Confort", "/100"),
 }
 
-DEFAULT_CITIES = {
-    "Paris": {"lat": 48.8566, "lon": 2.3522},
-    "Lyon": {"lat": 45.7640, "lon": 4.8357},
-    "Marseille": {"lat": 43.2965, "lon": 5.3698},
-    "London": {"lat": 51.5074, "lon": -0.1278},
-    "Madrid": {"lat": 40.4168, "lon": -3.7038}
-}
+DEFAULT_CITIES = [
+    City("Paris", 48.8566, 2.3522, "France"),
+    City("Lyon", 45.7640, 4.8357, "France"),
+    City("Marseille", 43.2965, 5.3698, "France"),
+    City("Londres", 51.5074, -0.1278, "Royaume-Uni"),
+    City("Madrid", 40.4168, -3.7038, "Espagne"),
+]
 
 # Thresholds for alerts (WHO 2021 guidelines; temperatures from French heatwave vigilance levels)
 THRESHOLDS = {

@@ -6,6 +6,7 @@ import requests
 
 from src.api_client import WeatherAPIClient
 from src.config import FORECAST_DAYS, PAST_DAYS
+from src.models import City
 
 
 @pytest.fixture
@@ -75,7 +76,34 @@ def test_mock_data_contains_all_required_variables(client):
 def test_geocode_city(client, monkeypatch):
     payload = {"results": [{"name": "Bordeaux", "country": "France", "latitude": 44.84, "longitude": -0.58}]}
     monkeypatch.setattr(client.session, "get", lambda *a, **k: FakeResponse(payload))
-    assert client.geocode_city("Bordeaux") == {"name": "Bordeaux", "country": "France", "lat": 44.84, "lon": -0.58}
+    city = client.geocode_city("Bordeaux")
+    assert city == City("Bordeaux", 44.84, -0.58, "France")
+    assert city.label == "Bordeaux (France)"
+
+
+def test_geocode_city_uses_cache(client, monkeypatch):
+    payload = {"results": [{"name": "Nantes", "country": "France", "latitude": 47.22, "longitude": -1.55}]}
+    monkeypatch.setattr(client.session, "get", lambda *a, **k: FakeResponse(payload))
+    client.geocode_city("Nantes")
+
+    def fail(*args, **kwargs):
+        raise AssertionError("API should not be called")
+
+    monkeypatch.setattr(client.session, "get", fail)
+    assert client.geocode_city("nantes") == City("Nantes", 47.22, -1.55, "France")
+
+
+def test_geocode_incomplete_result(client, monkeypatch):
+    monkeypatch.setattr(client.session, "get", lambda *a, **k: FakeResponse({"results": [{"name": "Nowhere"}]}))
+    assert client.geocode_city("Nowhere") is None
+
+
+def test_geocode_network_error(client, monkeypatch):
+    def fail(*args, **kwargs):
+        raise requests.exceptions.Timeout("timeout")
+
+    monkeypatch.setattr(client.session, "get", fail)
+    assert client.geocode_city("Lille") is None
 
 
 def test_geocode_unknown_city(client, monkeypatch):
@@ -97,3 +125,7 @@ def test_mock_data_is_stable_within_the_hour(client):
     first = client.fetch_weather_and_air_quality(48.85, 2.35, mock_mode=True)
     second = client.fetch_weather_and_air_quality(48.85, 2.35, mock_mode=True)
     assert first == second
+
+
+def test_city_label_without_country():
+    assert City("Paris", 48.85, 2.35).label == "Paris"

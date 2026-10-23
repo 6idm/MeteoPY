@@ -27,7 +27,6 @@ GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 class WeatherAPIClient:
     """
     Handles API calls to Open-Meteo REST APIs and manages SQLite local caching.
-    Author: Student A (Data / API Engineer)
     """
 
     def __init__(self, db_path: str = CACHE_DB):

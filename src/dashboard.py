@@ -444,11 +444,8 @@ def render_map(cities: Dict[str, City], selected_city: City, mock_mode: bool) ->
         )
 
 
-def render_dashboard():
-    """
-    Renders Streamlit Web Application Interface.
-    Author: Student C (Lead UI/UX)
-    """
+def render_dashboard() -> None:
+    """Renders Streamlit Web Application Interface."""
     st.set_page_config(page_title="MeteoPY · Météo & Qualité de l'air", page_icon=":material/air:",
                        layout="wide")
     st.html(CSS)

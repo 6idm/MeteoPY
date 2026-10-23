@@ -26,7 +26,6 @@ VALID_RANGES = {
 class DataProcessor:
     """
     Data Transformation, Statistics and Calculations.
-    Author: Student B (Data Analyst)
     """
 
     @staticmethod

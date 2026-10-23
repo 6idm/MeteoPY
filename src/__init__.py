@@ -1,1 +1,4 @@
-"""Dashboard Météo & Qualité de l'Air."""
+"""Dashboard Météo & Qualité de l'Air.
+
+Auteurs : Etienne, Rostom, Sid'ahmed.
+"""

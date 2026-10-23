@@ -56,15 +56,23 @@ DEFAULT_CITIES = [
     City("Madrid", 40.4168, -3.7038, "Espagne"),
 ]
 
-# Thresholds for alerts (WHO 2021 guidelines; temperatures from French heatwave vigilance levels)
+# WHO 2021 air quality guidelines. "warning" is the guideline value (AQG), "danger" the closest
+# interim target above it. Both apply to the mean concentration over "hours" (8 h for ozone).
 THRESHOLDS = {
-    "pm2_5": {"warning": 15.0, "danger": 25.0, "unit": "µg/m³"},
-    "pm10": {"warning": 45.0, "danger": 50.0, "unit": "µg/m³"},
-    "no2": {"warning": 25.0, "danger": 50.0, "unit": "µg/m³"},
-    "o3": {"warning": 100.0, "danger": 180.0, "unit": "µg/m³"},
-    "so2": {"warning": 40.0, "danger": 125.0, "unit": "µg/m³"},
-    "temp_max": {"warning": 33.0, "danger": 38.0, "unit": "°C"}
+    "pm2_5": {"warning": 15.0, "danger": 25.0, "hours": 24, "unit": "µg/m³"},   # AQG / IT-4
+    "pm10": {"warning": 45.0, "danger": 50.0, "hours": 24, "unit": "µg/m³"},    # AQG / IT-4
+    "no2": {"warning": 25.0, "danger": 50.0, "hours": 24, "unit": "µg/m³"},     # AQG / IT-2
+    "o3": {"warning": 100.0, "danger": 120.0, "hours": 8, "unit": "µg/m³"},     # AQG / IT-2
+    "so2": {"warning": 40.0, "danger": 50.0, "hours": 24, "unit": "µg/m³"},     # AQG / IT-2
+    "co": {"warning": 4000.0, "danger": 7000.0, "hours": 24, "unit": "µg/m³"},  # AQG / IT-1 (4 / 7 mg/m³)
 }
+
+# Minimum share of hourly values needed to compute a mean (EU rule: 18 h out of 24)
+MIN_DATA_COVERAGE = 0.75
+
+# Heatwave (Météo-France method): means over 3 days of the daily min and max temperatures
+# (IBMn / IBMx) compared to thresholds. Météo-France sets them per department; these are typical values.
+HEATWAVE = {"tmin": 20.0, "tmax": 33.0, "days": 3}
 
 # US AQI categories: (upper bound, label, color)
 AQI_CATEGORIES = [

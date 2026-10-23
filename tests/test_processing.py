@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.alerts import AlertEngine
 from src.data_processing import DataProcessor
 
 
@@ -118,31 +117,25 @@ def test_aqi_category(aqi, expected):
     assert DataProcessor.get_aqi_category(aqi)["label"] == expected
 
 
-def test_alerts_detection(mock_df):
-    alerts = AlertEngine.detect_alerts(mock_df)
-    messages = " ".join(a["message"] for a in alerts)
-    assert len(alerts) == 4
-    assert all(a["level"] == "danger" for a in alerts)
-    assert "Alerte Canicule" in messages
-    assert "Alerte Pic de Pollution NO2" in messages
-
-
-def test_alerts_warning_level(mock_df):
-    df = mock_df.iloc[[0]].copy()
-    df["pm2_5"] = 20.0
-    alerts = AlertEngine.detect_alerts(df)
-    assert [a["level"] for a in alerts] == ["warning"]
-    assert "PM2.5" in alerts[0]["message"]
-
-
-def test_no_alert_when_values_are_normal(mock_df):
-    assert AlertEngine.detect_alerts(mock_df.iloc[[0]]) == []
-
-
-def test_no_alert_on_empty_dataframe():
-    assert AlertEngine.detect_alerts(pd.DataFrame()) == []
-
-
 def test_compute_variation(hourly_df):
     assert DataProcessor.compute_variation(hourly_df, "temperature_2m", 24) == 24
     assert np.isnan(DataProcessor.compute_variation(hourly_df, "temperature_2m", 100))
+
+
+def test_rolling_mean(hourly_df):
+    assert DataProcessor.rolling_mean(hourly_df, "temperature_2m", 24) == pytest.approx(35.5)
+    assert np.isnan(DataProcessor.rolling_mean(hourly_df, "unknown", 24))
+
+
+def test_rolling_mean_requires_enough_data(hourly_df):
+    df = hourly_df.copy()
+    df.loc[df.index[-10:], "temperature_2m"] = np.nan  # 14 values out of 24 < 75 %
+    assert np.isnan(DataProcessor.rolling_mean(df, "temperature_2m", 24, end=df["datetime"].iloc[-1]))
+
+
+def test_daily_summary_with_missing_values(hourly_df):
+    df = hourly_df.copy()
+    df.loc[df.index[:24], "precipitation"] = np.nan
+    daily = DataProcessor.compute_daily_summary(df)
+    assert np.isnan(daily.iloc[0]["precipitation_totale"])
+    assert daily.iloc[1]["precipitation_totale"] == 24

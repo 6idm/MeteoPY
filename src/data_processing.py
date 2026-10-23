@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from src.config import AQI_CATEGORIES, THRESHOLDS
+from src.config import AQI_CATEGORIES, MIN_DATA_COVERAGE, THRESHOLDS
 
 # Physically valid ranges used to discard corrupted values
 VALID_RANGES = {
@@ -95,6 +95,20 @@ class DataProcessor:
         if end is None:
             end = DataProcessor.get_latest_observation(df)["datetime"]
         return df[(df["datetime"] > end - pd.Timedelta(hours=hours)) & (df["datetime"] <= end)]
+
+    @staticmethod
+    def rolling_mean(df: pd.DataFrame, column: str, hours: int, end: Optional[pd.Timestamp] = None,
+                     min_coverage: float = MIN_DATA_COVERAGE) -> float:
+        """
+        Mean of a column over the last `hours` hours of observations.
+        Returns NaN when less than `min_coverage` of the hourly values are available.
+        """
+        if df.empty or column not in df.columns:
+            return np.nan
+        values = DataProcessor.get_window(df, hours, end)[column].dropna()
+        if len(values) < min_coverage * hours:
+            return np.nan
+        return float(values.mean())
 
     @staticmethod
     def compute_statistics(df: pd.DataFrame, columns: List[str], hours: int,

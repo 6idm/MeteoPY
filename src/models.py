@@ -1,4 +1,4 @@
-"""Data classes shared by the modules."""
+"""Data classes shared by the modules: monitored cities and generated alerts."""
 from dataclasses import dataclass
 
 
@@ -15,3 +15,9 @@ class City:
         """Display name, with the country to tell homonyms apart (e.g. "Paris (France)")."""
         return f"{self.name} ({self.country})" if self.country else self.name
 
+
+@dataclass(frozen=True)
+class Alert:
+    """Alert shown in the dashboard. The message has the form "<title> : <details>"."""
+    level: str  # "warning" or "danger"
+    message: str

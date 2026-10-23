@@ -25,7 +25,8 @@ MUTED_INK = "#898781"
 
 # Colors follow the pollutant, never its position in the selection
 POLLUTANT_SLOTS = {"pm2_5": 0, "pm10": 1, "nitrogen_dioxide": 2, "ozone": 3, "sulphur_dioxide": 4}
-WHO_KEYS = {"pm2_5": "pm2_5", "pm10": "pm10", "nitrogen_dioxide": "no2", "ozone": "o3", "sulphur_dioxide": "so2"}
+WHO_KEYS = {"pm2_5": "pm2_5", "pm10": "pm10", "nitrogen_dioxide": "no2", "ozone": "o3", "sulphur_dioxide": "so2",
+            "carbon_monoxide": "co"}
 STAT_WINDOWS = {"6 h": 6, "24 h": 24, "3 jours": 72, "7 jours": 168}
 WIND_DIRECTIONS = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"]
 SOURCE_LABELS = {"api": ("Données en direct", "green"), "cache": ("Cache local", "blue"),
@@ -202,7 +203,7 @@ def render_alerts(df: pd.DataFrame) -> None:
     if not alerts:
         render_notice("good", "Aucune alerte : pas de dépassement des seuils OMS ni de forte chaleur.")
     for alert in alerts:
-        render_notice(alert["level"], alert["message"])
+        render_notice(alert.level, alert.message)
 
 
 def render_current_conditions(df: pd.DataFrame, latest: pd.Series) -> None:
@@ -332,14 +333,21 @@ def render_air_quality(df: pd.DataFrame, latest: pd.Series) -> None:
         st.caption(f"Monoxyde de carbone (CO) actuel : {fmt(latest['carbon_monoxide'], 'µg/m³', 0)}")
 
     with right:
-        st.markdown("##### Niveau actuel / seuil OMS")
+        st.markdown("##### Moyenne / valeur guide OMS")
         rows = []
         for pollutant, key in WHO_KEYS.items():
-            ratio = latest[pollutant] / THRESHOLDS[key]["warning"] * 100
+            threshold = THRESHOLDS[key]
+            mean = DataProcessor.rolling_mean(df, pollutant, threshold["hours"], end=latest["datetime"])
+            if pd.isna(mean):
+                continue
+            ratio = mean / threshold["warning"] * 100
             status = "good" if ratio < 100 else "serious" if ratio < 200 else "critical"
-            rows.append({"Polluant": METRICS[pollutant][0], "ratio": ratio, "color": STATUS_COLORS[status],
-                         "text": f"{ratio:.0f} %", "value": latest[pollutant],
-                         "threshold": THRESHOLDS[key]["warning"]})
+            rows.append({"Polluant": f"{METRICS[pollutant][0]} ({threshold['hours']} h)", "ratio": ratio,
+                         "color": STATUS_COLORS[status], "text": f"{ratio:.0f} %", "value": mean,
+                         "threshold": threshold["warning"]})
+        if not rows:
+            st.info("Pas assez de mesures sur la période pour calculer les moyennes.")
+            return
         ratio_df = pd.DataFrame(rows).iloc[::-1]
         fig_ratio = go.Figure(go.Bar(
             x=ratio_df["ratio"], y=ratio_df["Polluant"], orientation="h", text=ratio_df["text"],

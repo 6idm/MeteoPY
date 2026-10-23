@@ -1,7 +1,7 @@
 """Streamlit user interface (View layer)."""
 from dataclasses import dataclass
 from html import escape
-from typing import Dict, List, Optional
+from typing import Dict
 
 import pandas as pd
 import plotly.express as px
@@ -43,7 +43,9 @@ h1 { letter-spacing: -0.02em; }
     border: 1px solid rgba(127, 127, 127, 0.22); border-radius: 0.75rem;
     padding: 1.25rem 1.4rem; height: 100%; background: rgba(127, 127, 127, 0.04);
 }
-.mp-hero-value { font-size: 4.2rem; font-weight: 650; line-height: 1; letter-spacing: -0.04em; margin: 0.6rem 0 0.5rem; }
+.mp-hero-value {
+    font-size: 4.2rem; font-weight: 650; line-height: 1; letter-spacing: -0.04em; margin: 0.6rem 0 0.5rem;
+}
 .mp-hero-value span { font-size: 1.6rem; font-weight: 500; opacity: 0.6; margin-left: 0.2rem; vertical-align: top; }
 .mp-hero-sub { font-size: 0.95rem; opacity: 0.75; }
 .mp-hero-cond { font-size: 1.1rem; font-weight: 600; margin-top: 0.9rem; }
@@ -56,7 +58,9 @@ h1 { letter-spacing: -0.02em; }
     position: absolute; top: -0.3rem; width: 3px; height: 1.05rem; border-radius: 2px;
     background: currentColor; transform: translateX(-50%);
 }
-.mp-gauge-scale { display: flex; justify-content: space-between; font-size: 0.72rem; opacity: 0.55; margin-top: 0.35rem; }
+.mp-gauge-scale {
+    display: flex; justify-content: space-between; font-size: 0.72rem; opacity: 0.55; margin-top: 0.35rem;
+}
 .mp-alert {
     display: flex; gap: 0.9rem; align-items: baseline; padding: 0.7rem 1rem; margin-bottom: 0.5rem;
     border-radius: 0.6rem; border: 1px solid rgba(127, 127, 127, 0.22); border-left-width: 4px;
@@ -230,7 +234,7 @@ def render_current_conditions(df: pd.DataFrame, latest: pd.Series) -> None:
     scale_max = 300
     segments = "".join(
         f'<div style="background:{color}; flex:{(min(upper, scale_max) - lower) / scale_max}"></div>'
-        for (upper, _, color), lower in zip(AQI_CATEGORIES, [0] + [c[0] for c in AQI_CATEGORIES[:-1]])
+        for (upper, _, color), lower in zip(AQI_CATEGORIES, [0] + [c[0] for c in AQI_CATEGORIES[:-1]], strict=True)
         if lower < scale_max
     )
     marker = "" if pd.isna(aqi) else (
@@ -264,7 +268,7 @@ def render_kpis(df: pd.DataFrame, latest: pd.Series) -> None:
     ]
     for row_start in (0, 4):
         cols = st.columns(4, gap="small")
-        for col, (metric, decimals, delta_color) in zip(cols, kpis[row_start:row_start + 4]):
+        for col, (metric, decimals, delta_color) in zip(cols, kpis[row_start:row_start + 4], strict=True):
             name, unit = METRICS[metric]
             variation = DataProcessor.compute_variation(df, metric, 24)
             col.metric(
@@ -424,7 +428,7 @@ def render_map(cities: Dict[str, City], selected_city: City, mock_mode: bool) ->
         fig_map = px.scatter_map(
             map_df, lat="lat", lon="lon", hover_name="Ville", color="Catégorie", size="taille", size_max=20,
             hover_data={"AQI": ":.0f", "Température (°C)": True, "lat": False, "lon": False, "taille": False},
-            color_discrete_map=dict(zip(map_df["Catégorie"], map_df["color"])), zoom=3.6, height=480,
+            color_discrete_map=dict(zip(map_df["Catégorie"], map_df["color"], strict=True)), zoom=3.6, height=480,
             center={"lat": selected_city.lat, "lon": selected_city.lon},
             map_style="carto-darkmatter" if theme_type() == "dark" else "carto-positron",
         )

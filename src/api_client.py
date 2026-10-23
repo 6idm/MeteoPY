@@ -12,8 +12,13 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from src.config import (
-    AIR_QUALITY_VARIABLES, CACHE_DB, CACHE_TTL_MINUTES, FORECAST_DAYS, PAST_DAYS,
-    REQUEST_TIMEOUT_SECONDS, WEATHER_VARIABLES
+    AIR_QUALITY_VARIABLES,
+    CACHE_DB,
+    CACHE_TTL_MINUTES,
+    FORECAST_DAYS,
+    PAST_DAYS,
+    REQUEST_TIMEOUT_SECONDS,
+    WEATHER_VARIABLES,
 )
 from src.models import City
 
